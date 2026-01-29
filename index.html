@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WeChat History Viewer</title>
+</head>
+
+<body>
+  <div class="ai-panel">
+    <div class="ai-header">
+      <span class="title">AI 智能分析</span>
+      <button class="settings-btn" id="aiSettingsBtn">⚙️ 配置</button>
+    </div>
+    <div class="ai-settings" id="aiSettings" style="display: none;">
+      <div class="form-group">
+        <label>API URL</label>
+        <input type="text" id="aiProxyUrl" placeholder="https://api.deepseek.com/chat/completions" />
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input type="password" id="aiApiKey" placeholder="sk-..." />
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input type="text" id="aiModel" placeholder="deepseek-chat" value="deepseek-chat" />
+      </div>
+      <button id="aiSaveSettingsBtn">保存配置</button>
+    </div>
+    <div class="ai-input-row">
+      <select id="aiTimeRange" style="max-width: 100px; padding: 6px; border: 1px solid var(--input-border); border-radius: 4px; background: var(--input-bg); color: var(--text-primary); font-size: 12px;">
+        <option value="1">最近24小时</option>
+        <option value="7" selected>最近7天</option>
+        <option value="30">最近30天</option>
+        <option value="0">全部消息</option>
+      </select>
+      <input id="aiInput" type="text" placeholder="请输入分析需求..." />
+      <button id="aiAnalyzeBtn">分析</button>
+    </div>
+    <div class="ai-status" id="aiStatus"></div>
+    <div class="ai-result" id="aiResult"></div>
+  </div>
+  <div class="wechat-layout">
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="user-info" id="currentUserInfo">
+          <div class="avatar">Me</div>
+          <span class="username">Current User</span>
+        </div>
+        <div class="search-box">
+          <input type="text" placeholder="Search" />
+        </div>
+      </div>
+      <div class="chat-list" id="chatList">
+        <!-- Chat items will be rendered here -->
+        <div class="loading">Loading chats...</div>
+      </div>
+    </div>
+    <div class="main-chat">
+      <div class="chat-header" id="chatHeader">
+        <div class="chat-title">Select a chat</div>
+      </div>
+      <div class="message-list" id="messageList">
+        <!-- Messages will be rendered here -->
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/index.ts"></script>
+</body>
+
+</html>
