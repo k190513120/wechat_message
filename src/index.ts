@@ -148,11 +148,17 @@ async function init() {
 
   const MAX_RECORDS = 1000000;
 
+  const activeView = await table.getActiveView();
+  const activeViewName = await activeView.getName();
+  const activeViewId = activeView.id;
+
   console.log('Start loading records...');
+  console.log(`Active view: ${activeViewName}`);
   while (hasMore && allRecords.length < MAX_RECORDS) {
     const res: IGetRecordsByPageResponse = await table.getRecordsByPage({
       pageSize: 200,
-      pageToken: pageToken
+      pageToken: pageToken,
+      viewId: activeViewId
     });
     allRecords.push(...res.records);
     pageToken = res.pageToken;
@@ -161,19 +167,7 @@ async function init() {
     console.log(`Loaded ${allRecords.length} records...`);
   }
 
-  if (total > allRecords.length && allRecords.length < MAX_RECORDS) {
-    console.warn(`Pagination ended early. total=${total}, loaded=${allRecords.length}. Fallback to recordId list.`);
-    const recordIds = await table.getRecordIdList();
-    const limitedIds = recordIds.slice(0, MAX_RECORDS);
-    allRecords = [];
-    for (const batch of _.chunk(limitedIds, 1000)) {
-      const batchRecords = await table.getRecordsByIds(batch);
-      allRecords.push(...batchRecords);
-      console.log(`Loaded ${allRecords.length} records...`);
-    }
-  }
-
-  console.log(`Finished loading. Total records: ${allRecords.length}`);
+  console.log(`Finished loading. Total records: ${allRecords.length}, view: ${activeViewName}`);
 
   const rawRecords = allRecords;
 
