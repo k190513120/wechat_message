@@ -1,5 +1,5 @@
 import $ from 'jquery';
-import { bitable, FieldType, IOpenAttachment } from '@lark-base-open/js-sdk';
+import { bitable, FieldType, IGetRecordsByPageResponse, IOpenAttachment } from '@lark-base-open/js-sdk';
 import dayjs from 'dayjs';
 import _ from 'lodash';
 import './index.scss';
@@ -68,7 +68,7 @@ $(async function () {
 
 function loadMockData() {
   currentUserId = '章文洁';
-  
+
   // Mock Single Chat
   const chat1Id = 'single_AL_章文洁';
   const chat1: ChatSession = {
@@ -94,8 +94,8 @@ function loadMockData() {
     avatar: '',
     type: 'group',
     messages: [
-       { recordId: 'mock11', id: '11', seq: 1, senderId: 'Bob', senderName: 'Bob', senderAvatar: '', msgType: 'text', content: '大家看下这个需求', time: Date.now() - 7200000, isSelf: false },
-       { recordId: 'mock12', id: '12', seq: 2, senderId: '章文洁', senderName: '章文洁', senderAvatar: '', msgType: 'text', content: '收到', time: Date.now() - 7100000, isSelf: true }
+      { recordId: 'mock11', id: '11', seq: 1, senderId: 'Bob', senderName: 'Bob', senderAvatar: '', msgType: 'text', content: '大家看下这个需求', time: Date.now() - 7200000, isSelf: false },
+      { recordId: 'mock12', id: '12', seq: 2, senderId: '章文洁', senderName: '章文洁', senderAvatar: '', msgType: 'text', content: '收到', time: Date.now() - 7100000, isSelf: true }
     ],
     participants: new Set(['Bob', '章文洁']),
     lastTime: Date.now() - 100000
@@ -110,10 +110,10 @@ async function init() {
   console.log('Initializing plugin...');
   const table = await bitable.base.getActiveTable();
   console.log('Connected to table:', await table.getName());
-  
+
   const fieldMetaList = await table.getFieldMetaList();
   console.log('Available fields in table:', fieldMetaList.map(f => f.name));
-  
+
   // Map field names to IDs
   const fieldMap: Record<string, string> = {};
   let foundAnyField = false;
@@ -129,10 +129,10 @@ async function init() {
       missingFields.push(name);
     }
   }
-  
+
   if (!foundAnyField) {
-     // Silent failure for local dev to avoid console spam
-     throw new Error('No matching fields found, switching to Mock Data.');
+    // Silent failure for local dev to avoid console spam
+    throw new Error('No matching fields found, switching to Mock Data.');
   }
 
   if (missingFields.length > 0) {
@@ -141,35 +141,48 @@ async function init() {
 
   globalFieldMap = fieldMap;
 
-  // Load records
-  const allRecords: any[] = [];
-  let pageToken: any = undefined;
+  let allRecords: any[] = [];
+  let pageToken: number | undefined = undefined;
   let hasMore = true;
-  
-  // Safety limit to prevent browser crash on huge tables
-  const MAX_RECORDS = 20000; 
+  let total = 0;
+
+  const MAX_RECORDS = 1000000;
 
   console.log('Start loading records...');
   while (hasMore && allRecords.length < MAX_RECORDS) {
-      const res = await table.getRecords({
-          pageSize: 1000,
-          pageToken: pageToken
-      });
-      allRecords.push(...res.records);
-      pageToken = res.pageToken;
-      hasMore = res.hasMore;
-      console.log(`Loaded ${allRecords.length} records...`);
+    const res: IGetRecordsByPageResponse = await table.getRecordsByPage({
+      pageSize: 200,
+      pageToken: pageToken
+    });
+    allRecords.push(...res.records);
+    pageToken = res.pageToken;
+    hasMore = res.hasMore;
+    total = res.total;
+    console.log(`Loaded ${allRecords.length} records...`);
   }
+
+  if (total > allRecords.length && allRecords.length < MAX_RECORDS) {
+    console.warn(`Pagination ended early. total=${total}, loaded=${allRecords.length}. Fallback to recordId list.`);
+    const recordIds = await table.getRecordIdList();
+    const limitedIds = recordIds.slice(0, MAX_RECORDS);
+    allRecords = [];
+    for (const batch of _.chunk(limitedIds, 1000)) {
+      const batchRecords = await table.getRecordsByIds(batch);
+      allRecords.push(...batchRecords);
+      console.log(`Loaded ${allRecords.length} records...`);
+    }
+  }
+
   console.log(`Finished loading. Total records: ${allRecords.length}`);
 
   const rawRecords = allRecords;
-  
+
   // Process Data
   const chats: Record<string, ChatSession> = {};
 
   for (const record of rawRecords) {
     const fields = record.fields;
-    
+
     const senderId = (fields[fieldMap.SENDER_ID] as any)?.[0]?.text || (fields[fieldMap.SENDER_ID] as string) || 'Unknown';
     const senderName = (fields[fieldMap.SENDER_NAME] as any)?.[0]?.text || (fields[fieldMap.SENDER_NAME] as string) || senderId;
     const senderAvatar = (fields[fieldMap.SENDER_AVATAR] as any)?.[0]?.text || (fields[fieldMap.SENDER_AVATAR] as string) || '';
@@ -178,18 +191,46 @@ async function init() {
     const receiver = (fields[fieldMap.RECEIVER] as any)?.[0]?.text || (fields[fieldMap.RECEIVER] as string) || 'Unknown';
     const receiverName = (fields[fieldMap.RECEIVER_NAME] as any)?.[0]?.text || (fields[fieldMap.RECEIVER_NAME] as string) || receiver;
     const receiverAvatar = (fields[fieldMap.RECEIVER_AVATAR] as any)?.[0]?.text || (fields[fieldMap.RECEIVER_AVATAR] as string) || '';
-    
+
     const groupId = (fields[fieldMap.GROUP_ID] as any)?.[0]?.text || (fields[fieldMap.GROUP_ID] as string);
     const groupName = (fields[fieldMap.GROUP_NAME] as any)?.[0]?.text || (fields[fieldMap.GROUP_NAME] as string);
-    
+
     const msgType = (fields[fieldMap.MSG_TYPE] as any)?.text || (fields[fieldMap.MSG_TYPE] as string); // Select field returns object?
-    
+
     const contentText = (fields[fieldMap.CONTENT_TEXT] as any)?.[0]?.text || (fields[fieldMap.CONTENT_TEXT] as string) || '';
     const contentMedia = fields[fieldMap.CONTENT_MEDIA] as IOpenAttachment[];
-    
+
     const timeVal = fields[fieldMap.SEND_TIME] || fields[fieldMap.CREATE_TIME];
-    const time = timeVal ? new Date(timeVal as number).getTime() : 0;
-    
+    let time = 0;
+
+    // Improved time parsing
+    let rawTime = timeVal;
+
+    // Unpack if it's an array (Text field or similar often returns [{ text: '...' }])
+    if (Array.isArray(timeVal) && timeVal.length > 0) {
+      if (timeVal[0]?.text) {
+        rawTime = timeVal[0].text;
+      } else {
+        rawTime = timeVal[0];
+      }
+    }
+
+    if (typeof rawTime === 'number') {
+      time = rawTime;
+    } else if (typeof rawTime === 'string') {
+      // Try parsing string date
+      // Remove potential noise if necessary, but standard YYYY-MM-DD HH:mm:ss works with dayjs
+      const d = dayjs(rawTime);
+      if (d.isValid()) {
+        time = d.valueOf();
+      }
+    }
+
+    // If time is still 0 or invalid, fallback to current time or 0
+    if (!time || isNaN(time)) {
+      time = 0;
+    }
+
     const msgId = (fields[fieldMap.MSG_ID] as any)?.[0]?.text || (fields[fieldMap.MSG_ID] as string);
     const seq = (fields[fieldMap.MSG_SEQ] as number) || 0;
 
@@ -230,7 +271,7 @@ async function init() {
     // Update Chat Name/Avatar for Single Chat logic later (after we identify "Me")
     // Store metadata in the message or session to help resolve later
     // For now, we store raw data in message
-    
+
     chats[chatId].messages.push({
       recordId: record.recordId,
       id: msgId,
@@ -268,9 +309,9 @@ async function init() {
     });
 
     if (chat.type === 'single') {
-       chat.participants.forEach(p => {
-         participantCounts[p] = (participantCounts[p] || 0) + 1;
-       });
+      chat.participants.forEach(p => {
+        participantCounts[p] = (participantCounts[p] || 0) + 1;
+      });
     }
   }
   // Find max
@@ -288,22 +329,22 @@ async function init() {
   const meProfile = userProfiles[currentUserId];
   const meName = meProfile ? meProfile.name : currentUserId;
   const meAvatar = meProfile ? meProfile.avatar : '';
-  
+
   $('#currentUserInfo .username').text(meName);
   if (meAvatar) {
     $('#currentUserInfo .avatar').html(`<img src="${meAvatar}" alt="${meName}" />`);
   } else {
     $('#currentUserInfo .avatar').text(meName ? meName[0].toUpperCase() : 'Me');
   }
-  
+
   // Theme initialization
   const theme = await bitable.bridge.getTheme();
   document.body.setAttribute('data-theme', theme);
-  
+
   bitable.bridge.onThemeChange((event) => {
-     document.body.setAttribute('data-theme', event.data.theme);
+    document.body.setAttribute('data-theme', event.data.theme);
   });
-  
+
   // Update "isSelf" and Chat Info
   allChats.forEach(chat => {
     chat.messages.forEach(msg => {
@@ -311,15 +352,15 @@ async function init() {
     });
     // Update name for single chat to be the "Other" person
     if (chat.type === 'single') {
-       const otherId = Array.from(chat.participants).find(p => p !== currentUserId);
-       if (otherId) {
-         const profile = userProfiles[otherId];
-         chat.name = profile ? profile.name : otherId;
-         chat.avatar = profile ? profile.avatar : '';
-       }
+      const otherId = Array.from(chat.participants).find(p => p !== currentUserId);
+      if (otherId) {
+        const profile = userProfiles[otherId];
+        chat.name = profile ? profile.name : otherId;
+        chat.avatar = profile ? profile.avatar : '';
+      }
     } else {
-       // Group chat: try to find a default avatar if none?
-       // For now, keep as is.
+      // Group chat: try to find a default avatar if none?
+      // For now, keep as is.
     }
   });
 
@@ -329,7 +370,7 @@ async function init() {
   });
 
   renderChatList();
-  
+
   // Select first chat
   if (allChats.length > 0) {
     selectChat(allChats[0].id);
@@ -338,9 +379,27 @@ async function init() {
   }
 
   // Bind events
-  $(document).on('click', '.chat-item', function() {
+  $(document).on('click', '.chat-item', function () {
     const id = $(this).data('id');
     selectChat(id);
+  });
+
+  // Bind refresh button
+  $('#refreshBtn').on('click', async function () {
+    $(this).prop('disabled', true).text('刷新中...');
+    try {
+      // Reset state
+      allChats = [];
+      currentChatId = null;
+      $('#chatList').html('<div class="loading">正在重新加载数据...</div>');
+      $('#messageList').empty();
+      // Re-initialize
+      await init();
+    } catch (e) {
+      console.error('Refresh failed:', e);
+      $('#chatList .loading').text('刷新失败，请重试');
+    }
+    $(this).prop('disabled', false).text('🔄 刷新');
   });
 }
 
@@ -366,10 +425,10 @@ function renderChatList() {
   allChats.forEach(chat => {
     const lastMsg = chat.messages[chat.messages.length - 1];
     const preview = lastMsg ? (lastMsg.content || '[Media]') : '';
-    const timeStr = lastMsg ? dayjs(lastMsg.time).format('HH:mm') : '';
-    
-    const avatarContent = chat.avatar 
-      ? `<img src="${chat.avatar}" alt="${chat.name}" />` 
+    const timeStr = (lastMsg && lastMsg.time > 0) ? dayjs(lastMsg.time).format('HH:mm') : '';
+
+    const avatarContent = chat.avatar
+      ? `<img src="${chat.avatar}" alt="${chat.name}" />`
       : (chat.name ? chat.name[0].toUpperCase() : '?');
 
     const $item = $(`
@@ -403,7 +462,7 @@ async function selectChat(id: string) {
   // Render Messages
   const $msgs = $('#messageList');
   $msgs.empty();
-  
+
   // Show loading for messages if there are media items without URLs
   // This is a simple optimization: if we already fetched URLs, we don't fetch again
   // For now, we fetch every time or rely on browser cache if the URL is stable (it's not always)
@@ -413,21 +472,21 @@ async function selectChat(id: string) {
     // Collect messages that need URL fetching
     const table = await bitable.base.getActiveTable();
     const mediaField = await table.getField<any>(mediaFieldId);
-    
+
     // We can do this in parallel
     const urlPromises = chat.messages.map(async msg => {
-        if (msg.media && msg.media.length > 0 && !msg.mediaUrls) {
-             try {
-                // Fetch URLs for this record
-                // Note: getAttachmentUrls returns string[] corresponding to attachments
-                const urls = await mediaField.getAttachmentUrls(msg.recordId);
-                msg.mediaUrls = urls;
-             } catch (e) {
-                console.error('Failed to fetch attachment URLs', e);
-             }
+      if (msg.media && msg.media.length > 0 && !msg.mediaUrls) {
+        try {
+          // Fetch URLs for this record
+          // Note: getAttachmentUrls returns string[] corresponding to attachments
+          const urls = await mediaField.getAttachmentUrls(msg.recordId);
+          msg.mediaUrls = urls;
+        } catch (e) {
+          console.error('Failed to fetch attachment URLs', e);
         }
+      }
     });
-    
+
     await Promise.all(urlPromises);
   }
 
@@ -441,27 +500,27 @@ async function selectChat(id: string) {
     }
 
     const side = msg.isSelf ? 'message-right' : 'message-left';
-    
+
     const avatarContent = msg.senderAvatar
       ? `<img src="${msg.senderAvatar}" alt="${msg.senderName}" />`
       : (msg.senderName ? msg.senderName[0].toUpperCase() : '?');
-    
+
     let contentHtml = '';
     if (msg.content) {
-       contentHtml += `<div>${escapeHtml(msg.content)}</div>`;
+      contentHtml += `<div>${escapeHtml(msg.content)}</div>`;
     }
     if (msg.media && msg.media.length > 0) {
-       msg.media.forEach((m, index) => {
-          const url = msg.mediaUrls ? msg.mediaUrls[index] : '';
-          // Check if image
-          if (m.type.startsWith('image/') && url) {
-             contentHtml += `<div><img src="${url}" alt="${m.name}" style="max-width: 200px; max-height: 200px;" /></div>`;
-          } else if (url) {
-             contentHtml += `<div><a href="${url}" target="_blank">[File: ${m.name}]</a></div>`;
-          } else {
-             contentHtml += `<div>[File: ${m.name}]</div>`;
-          }
-       });
+      msg.media.forEach((m, index) => {
+        const url = msg.mediaUrls ? msg.mediaUrls[index] : '';
+        // Check if image
+        if (m.type.startsWith('image/') && url) {
+          contentHtml += `<div><img src="${url}" alt="${m.name}" style="max-width: 200px; max-height: 200px;" /></div>`;
+        } else if (url) {
+          contentHtml += `<div><a href="${url}" target="_blank">[File: ${m.name}]</a></div>`;
+        } else {
+          contentHtml += `<div>[File: ${m.name}]</div>`;
+        }
+      });
     }
 
     const $msg = $(`
@@ -477,7 +536,7 @@ async function selectChat(id: string) {
     `);
     $msgs.append($msg);
   });
-  
+
   // Scroll to bottom
   $msgs.scrollTop($msgs[0].scrollHeight);
 }
@@ -495,7 +554,7 @@ function bindAI() {
   // Load config from localStorage or fallback to URL/Global
   const savedConfig = JSON.parse(localStorage.getItem('wechat_plugin_ai_config') || '{}');
   const urlParams = new URLSearchParams(location.search);
-  
+
   // Default to DeepSeek
   aiConfig.proxyUrl = savedConfig.proxyUrl || urlParams.get('aiProxyUrl') || (window as any).AI_PROXY_URL || 'https://api.deepseek.com/chat/completions';
   aiConfig.model = savedConfig.model || urlParams.get('aiModel') || 'deepseek-chat';
@@ -521,13 +580,13 @@ function bindAI() {
       apiKey: String($('#aiApiKey').val() || '').trim(),
       model: String($('#aiModel').val() || '').trim(),
     };
-    
+
     // Save to localStorage
     localStorage.setItem('wechat_plugin_ai_config', JSON.stringify(newConfig));
-    
+
     // Update runtime config
     aiConfig = newConfig;
-    
+
     $('#aiSettings').hide();
     $('#aiStatus').text('配置已保存');
   });
@@ -543,17 +602,17 @@ function bindAI() {
       return;
     }
     $('#aiStatus').text('分析中...');
-    
+
     const days = parseInt(String($('#aiTimeRange').val()), 10);
     const summary = buildMessageDetails(days);
-    
+
     // Check if too large (approximate check)
     if (summary.length > 300000) {
-       $('#aiStatus').text('警告: 数据量过大，可能会超出模型限制，正在尝试发送...');
+      $('#aiStatus').text('警告: 数据量过大，可能会超出模型限制，正在尝试发送...');
     }
 
     const prompt = `用户需求：${q}\n\n聊天记录数据（请根据以下明细数据进行分析）：\n${summary}`;
-    
+
     try {
       const res = await fetch(aiConfig.proxyUrl, {
         method: 'POST',
@@ -587,7 +646,7 @@ function buildDataSummary(): string {
   const totalChats = allChats.length;
   const groupCount = allChats.filter(c => c.type === 'group').length;
   const singleCount = totalChats - groupCount;
-  
+
   // Stats
   let totalMessages = 0;
   let minTime = Infinity;
@@ -603,22 +662,22 @@ function buildDataSummary(): string {
       participantStats[sender] = (participantStats[sender] || 0) + 1;
     });
   });
-  
-  const timeRange = totalMessages > 0 
-    ? `${dayjs(minTime).format('YYYY-MM-DD')} 至 ${dayjs(maxTime).format('YYYY-MM-DD')}` 
+
+  const timeRange = totalMessages > 0
+    ? `${dayjs(minTime).format('YYYY-MM-DD')} 至 ${dayjs(maxTime).format('YYYY-MM-DD')}`
     : '无数据';
 
   const topSenders = Object.entries(participantStats)
-    .sort((a,b) => b[1] - a[1])
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([name, count]) => `${name}(${count})`)
     .join(', ');
 
-  const topChats = [...allChats].sort((a,b)=>b.messages.length - a.messages.length).slice(0,5)
+  const topChats = [...allChats].sort((a, b) => b.messages.length - a.messages.length).slice(0, 5)
     .map(c => `${c.name}(${c.type}) 消息数:${c.messages.length}`);
-    
-  const latestMsgs = [...allChats].flatMap(c => c.messages.slice(-1)).sort((a,b)=>b.time-a.time).slice(0,8)
-    .map(m => `[${dayjs(m.time).format('MM-DD HH:mm')}] ${m.senderId}: ${m.content?.slice(0,50) || '(Media)'}`);
+
+  const latestMsgs = [...allChats].flatMap(c => c.messages.slice(-1)).sort((a, b) => b.time - a.time).slice(0, 8)
+    .map(m => `[${dayjs(m.time).format('MM-DD HH:mm')}] ${m.senderId}: ${m.content?.slice(0, 50) || '(Media)'}`);
 
   return [
     `【基本概况】`,
@@ -638,7 +697,7 @@ function buildMessageDetails(days: number): string {
   // days=0 means all
   const now = Date.now();
   const cutoff = days > 0 ? now - days * 24 * 60 * 60 * 1000 : 0;
-  
+
   let msgs: { time: number; sender: string; content: string; chatName: string; type: string }[] = [];
 
   allChats.forEach(chat => {
